@@ -41,6 +41,8 @@ import unittest2 as unittest
 
 import mock
 
+import google.auth.credentials
+import google_auth_httplib2
 from googleapiclient.discovery import _fix_up_media_upload
 from googleapiclient.discovery import _fix_up_method_description
 from googleapiclient.discovery import _fix_up_parameters
@@ -50,6 +52,7 @@ from googleapiclient.discovery import build_from_document
 from googleapiclient.discovery import DISCOVERY_URI
 from googleapiclient.discovery import key2param
 from googleapiclient.discovery import MEDIA_BODY_PARAMETER_DEFAULT_VALUE
+from googleapiclient.discovery import MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE
 from googleapiclient.discovery import ResourceMethodParameters
 from googleapiclient.discovery import STACK_QUERY_PARAMETERS
 from googleapiclient.discovery import STACK_QUERY_PARAMETER_DEFAULT_VALUE
@@ -61,6 +64,8 @@ from googleapiclient.errors import MediaUploadSizeError
 from googleapiclient.errors import ResumableUploadError
 from googleapiclient.errors import UnacceptableMimeTypeError
 from googleapiclient.errors import UnknownApiNameOrVersion
+from googleapiclient.errors import UnknownFileType
+from googleapiclient.http import build_http
 from googleapiclient.http import BatchHttpRequest
 from googleapiclient.http import HttpMock
 from googleapiclient.http import HttpMockSequence
@@ -69,16 +74,17 @@ from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.http import MediaUpload
 from googleapiclient.http import MediaUploadProgress
 from googleapiclient.http import tunnel_patch
+from googleapiclient.model import JsonModel
+from googleapiclient.schema import Schemas
 from oauth2client import GOOGLE_TOKEN_URI
-from oauth2client import util
-from oauth2client.client import OAuth2Credentials
+from oauth2client.client import OAuth2Credentials, GoogleCredentials
+
+from googleapiclient import _helpers as util
 
 import uritemplate
 
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
-
-util.positional_parameters_enforcement = util.POSITIONAL_EXCEPTION
 
 
 def assertUrisEqual(testcase, expected, actual):
@@ -117,18 +123,21 @@ class Utilities(unittest.TestCase):
     self.zoo_get_method_desc = self.zoo_root_desc['methods']['query']
     self.zoo_animals_resource = self.zoo_root_desc['resources']['animals']
     self.zoo_insert_method_desc = self.zoo_animals_resource['methods']['insert']
+    self.zoo_schema = Schemas(self.zoo_root_desc)
 
   def test_key2param(self):
     self.assertEqual('max_results', key2param('max-results'))
     self.assertEqual('x007_bond', key2param('007-bond'))
 
-  def _base_fix_up_parameters_test(self, method_desc, http_method, root_desc):
+  def _base_fix_up_parameters_test(
+          self, method_desc, http_method, root_desc, schema):
     self.assertEqual(method_desc['httpMethod'], http_method)
 
     method_desc_copy = copy.deepcopy(method_desc)
     self.assertEqual(method_desc, method_desc_copy)
 
-    parameters = _fix_up_parameters(method_desc_copy, root_desc, http_method)
+    parameters = _fix_up_parameters(method_desc_copy, root_desc, http_method,
+                                    schema)
 
     self.assertNotEqual(method_desc, method_desc_copy)
 
@@ -142,14 +151,14 @@ class Utilities(unittest.TestCase):
     return parameters
 
   def test_fix_up_parameters_get(self):
-    parameters = self._base_fix_up_parameters_test(self.zoo_get_method_desc,
-                                                   'GET', self.zoo_root_desc)
+    parameters = self._base_fix_up_parameters_test(
+      self.zoo_get_method_desc, 'GET', self.zoo_root_desc, self.zoo_schema)
     # Since http_method is 'GET'
     self.assertFalse('body' in parameters)
 
   def test_fix_up_parameters_insert(self):
-    parameters = self._base_fix_up_parameters_test(self.zoo_insert_method_desc,
-                                                   'POST', self.zoo_root_desc)
+    parameters = self._base_fix_up_parameters_test(
+      self.zoo_insert_method_desc, 'POST', self.zoo_root_desc, self.zoo_schema)
     body = {
         'description': 'The request body.',
         'type': 'object',
@@ -160,34 +169,57 @@ class Utilities(unittest.TestCase):
 
   def test_fix_up_parameters_check_body(self):
     dummy_root_desc = {}
+    dummy_schema = {
+      'Request': {
+        'properties': {
+          "description": "Required. Dummy parameter.",
+          "type": "string"
+        }
+      }
+    }
     no_payload_http_method = 'DELETE'
     with_payload_http_method = 'PUT'
 
     invalid_method_desc = {'response': 'Who cares'}
-    valid_method_desc = {'request': {'key1': 'value1', 'key2': 'value2'}}
+    valid_method_desc = {
+      'request': {
+        'key1': 'value1',
+        'key2': 'value2',
+        '$ref': 'Request'
+      }
+    }
 
     parameters = _fix_up_parameters(invalid_method_desc, dummy_root_desc,
-                                    no_payload_http_method)
+                                    no_payload_http_method, dummy_schema)
     self.assertFalse('body' in parameters)
 
     parameters = _fix_up_parameters(valid_method_desc, dummy_root_desc,
-                                    no_payload_http_method)
+                                    no_payload_http_method, dummy_schema)
     self.assertFalse('body' in parameters)
 
     parameters = _fix_up_parameters(invalid_method_desc, dummy_root_desc,
-                                    with_payload_http_method)
+                                    with_payload_http_method, dummy_schema)
     self.assertFalse('body' in parameters)
 
     parameters = _fix_up_parameters(valid_method_desc, dummy_root_desc,
-                                    with_payload_http_method)
+                                    with_payload_http_method, dummy_schema)
     body = {
         'description': 'The request body.',
         'type': 'object',
         'required': True,
+        '$ref': 'Request',
         'key1': 'value1',
         'key2': 'value2',
     }
     self.assertEqual(parameters['body'], body)
+
+  def test_fix_up_parameters_optional_body(self):
+    # Request with no parameters
+    dummy_schema = {'Request': {'properties': {}}}
+    method_desc = {'request': {'$ref': 'Request'}}
+
+    parameters = _fix_up_parameters(method_desc, {}, 'POST', dummy_schema)
+    self.assertFalse(parameters['body']['required'])
 
   def _base_fix_up_method_description_test(
       self, method_desc, initial_parameters, final_parameters,
@@ -210,14 +242,16 @@ class Utilities(unittest.TestCase):
 
   def test_fix_up_media_upload_no_initial_valid_minimal(self):
     valid_method_desc = {'mediaUpload': {'accept': []}}
-    final_parameters = {'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE}
+    final_parameters = {'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE,
+                        'media_mime_type': MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE}
     self._base_fix_up_method_description_test(
         valid_method_desc, {}, final_parameters, [], 0,
         'http://root/upload/fake/fake-path/')
 
   def test_fix_up_media_upload_no_initial_valid_full(self):
     valid_method_desc = {'mediaUpload': {'accept': ['*/*'], 'maxSize': '10GB'}}
-    final_parameters = {'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE}
+    final_parameters = {'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE,
+                        'media_mime_type': MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE}
     ten_gb = 10 * 2**30
     self._base_fix_up_method_description_test(
         valid_method_desc, {}, final_parameters, ['*/*'],
@@ -234,7 +268,8 @@ class Utilities(unittest.TestCase):
     valid_method_desc = {'mediaUpload': {'accept': []}}
     initial_parameters = {'body': {}}
     final_parameters = {'body': {'required': False},
-                        'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE}
+                        'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE,
+                        'media_mime_type': MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE}
     self._base_fix_up_method_description_test(
         valid_method_desc, initial_parameters, final_parameters, [], 0,
         'http://root/upload/fake/fake-path/')
@@ -243,7 +278,8 @@ class Utilities(unittest.TestCase):
     valid_method_desc = {'mediaUpload': {'accept': ['*/*'], 'maxSize': '10GB'}}
     initial_parameters = {'body': {}}
     final_parameters = {'body': {'required': False},
-                        'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE}
+                        'media_body': MEDIA_BODY_PARAMETER_DEFAULT_VALUE,
+                        'media_mime_type': MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE}
     ten_gb = 10 * 2**30
     self._base_fix_up_method_description_test(
         valid_method_desc, initial_parameters, final_parameters, ['*/*'],
@@ -251,7 +287,7 @@ class Utilities(unittest.TestCase):
 
   def test_fix_up_method_description_get(self):
     result = _fix_up_method_description(self.zoo_get_method_desc,
-                                        self.zoo_root_desc)
+                                        self.zoo_root_desc, self.zoo_schema)
     path_url = 'query'
     http_method = 'GET'
     method_id = 'bigquery.query'
@@ -263,7 +299,7 @@ class Utilities(unittest.TestCase):
 
   def test_fix_up_method_description_insert(self):
     result = _fix_up_method_description(self.zoo_insert_method_desc,
-                                        self.zoo_root_desc)
+                                        self.zoo_root_desc, self.zoo_schema)
     path_url = 'animals'
     http_method = 'POST'
     method_id = 'zoo.animals.insert'
@@ -357,19 +393,30 @@ class DiscoveryErrors(unittest.TestCase):
       with self.assertRaises(UnknownApiNameOrVersion):
         plus = build('plus', 'v1', http=http, cache_discovery=False)
 
+  def test_credentials_and_http_mutually_exclusive(self):
+    http = HttpMock(datafile('plus.json'), {'status': '200'})
+    with self.assertRaises(ValueError):
+      build(
+        'plus', 'v1', http=http, credentials=mock.sentinel.credentials)
+
 
 class DiscoveryFromDocument(unittest.TestCase):
+  MOCK_CREDENTIALS = mock.Mock(spec=google.auth.credentials.Credentials)
 
   def test_can_build_from_local_document(self):
     discovery = open(datafile('plus.json')).read()
-    plus = build_from_document(discovery, base="https://www.googleapis.com/")
+    plus = build_from_document(
+      discovery, base="https://www.googleapis.com/",
+      credentials=self.MOCK_CREDENTIALS)
     self.assertTrue(plus is not None)
     self.assertTrue(hasattr(plus, 'activities'))
 
   def test_can_build_from_local_deserialized_document(self):
     discovery = open(datafile('plus.json')).read()
     discovery = json.loads(discovery)
-    plus = build_from_document(discovery, base="https://www.googleapis.com/")
+    plus = build_from_document(
+      discovery, base="https://www.googleapis.com/",
+      credentials=self.MOCK_CREDENTIALS)
     self.assertTrue(plus is not None)
     self.assertTrue(hasattr(plus, 'activities'))
 
@@ -377,13 +424,36 @@ class DiscoveryFromDocument(unittest.TestCase):
     discovery = open(datafile('plus.json')).read()
 
     base = "https://www.example.com/"
-    plus = build_from_document(discovery, base=base)
+    plus = build_from_document(
+      discovery, base=base, credentials=self.MOCK_CREDENTIALS)
     self.assertEquals("https://www.googleapis.com/plus/v1/", plus._baseUrl)
 
-  def test_building_with_optional_http(self):
+  def test_building_with_optional_http_with_authorization(self):
     discovery = open(datafile('plus.json')).read()
-    plus = build_from_document(discovery, base="https://www.googleapis.com/")
-    self.assertTrue(isinstance(plus._http, httplib2.Http))
+    plus = build_from_document(
+      discovery, base="https://www.googleapis.com/",
+      credentials=self.MOCK_CREDENTIALS)
+
+    # plus service requires Authorization, hence we expect to see AuthorizedHttp object here
+    self.assertIsInstance(plus._http, google_auth_httplib2.AuthorizedHttp)
+    self.assertIsInstance(plus._http.http, httplib2.Http)
+    self.assertIsInstance(plus._http.http.timeout, int)
+    self.assertGreater(plus._http.http.timeout, 0)
+
+  def test_building_with_optional_http_with_no_authorization(self):
+    discovery = open(datafile('plus.json')).read()
+    # Cleanup auth field, so we would use plain http client
+    discovery = json.loads(discovery)
+    discovery['auth'] = {}
+    discovery = json.dumps(discovery)
+
+    plus = build_from_document(
+      discovery, base="https://www.googleapis.com/",
+      credentials=None)
+    # plus service requires Authorization
+    self.assertIsInstance(plus._http, httplib2.Http)
+    self.assertIsInstance(plus._http.timeout, int)
+    self.assertGreater(plus._http.timeout, 0)
 
   def test_building_with_explicit_http(self):
     http = HttpMock()
@@ -391,6 +461,16 @@ class DiscoveryFromDocument(unittest.TestCase):
     plus = build_from_document(
       discovery, base="https://www.googleapis.com/", http=http)
     self.assertEquals(plus._http, http)
+
+  def test_building_with_developer_key_skips_adc(self):
+    discovery = open(datafile('plus.json')).read()
+    plus = build_from_document(
+      discovery, base="https://www.googleapis.com/", developerKey='123')
+    self.assertIsInstance(plus._http, httplib2.Http)
+    # It should not be an AuthorizedHttp, because that would indicate that
+    # application default credentials were used.
+    self.assertNotIsInstance(plus._http, google_auth_httplib2.AuthorizedHttp)
+
 
 class DiscoveryFromHttp(unittest.TestCase):
   def setUp(self):
@@ -407,7 +487,7 @@ class DiscoveryFromHttp(unittest.TestCase):
       http = HttpMockSequence([
         ({'status': '400'}, open(datafile('zoo.json'), 'rb').read()),
         ])
-      zoo = build('zoo', 'v1', http=http, developerKey='foo',
+      zoo = build('zoo', 'v1', http=http, developerKey=None,
                   discoveryServiceUrl='http://example.com')
       self.fail('Should have raised an exception.')
     except HttpError as e:
@@ -425,6 +505,19 @@ class DiscoveryFromHttp(unittest.TestCase):
       self.fail('Should have raised an exception.')
     except HttpError as e:
       self.assertEqual(e.uri, 'http://example.com')
+
+  def test_key_is_added_to_discovery_uri(self):
+    # build() will raise an HttpError on a 400, use this to pick the request uri
+    # out of the raised exception.
+    try:
+      http = HttpMockSequence([
+        ({'status': '400'}, open(datafile('zoo.json'), 'rb').read()),
+        ])
+      zoo = build('zoo', 'v1', http=http, developerKey='foo',
+                  discoveryServiceUrl='http://example.com')
+      self.fail('Should have raised an exception.')
+    except HttpError as e:
+      self.assertEqual(e.uri, 'http://example.com?key=foo')
 
   def test_discovery_loading_from_v2_discovery_uri(self):
       http = HttpMockSequence([
@@ -501,8 +594,8 @@ class DictCache(Cache):
 class DiscoveryFromFileCache(unittest.TestCase):
   def test_file_based_cache(self):
     cache = mock.Mock(wraps=DictCache())
-    with mock.patch('googleapiclient.discovery_cache.file_cache.cache',
-                    new=cache):
+    with mock.patch('googleapiclient.discovery_cache.autodetect',
+                    return_value=cache):
       self.http = HttpMock(datafile('plus.json'), {'status': '200'})
 
       plus = build('plus', 'v1', http=self.http)
@@ -679,19 +772,28 @@ class Discovery(unittest.TestCase):
     self.assertTrue(getattr(plus, 'activities'))
     self.assertTrue(getattr(plus, 'people'))
 
-  def test_credentials(self):
-    class CredentialsMock:
-      def create_scoped_required(self):
-        return False
+  def test_oauth2client_credentials(self):
+    credentials = mock.Mock(spec=GoogleCredentials)
+    credentials.create_scoped_required.return_value = False
 
-      def authorize(self, http):
-        http.orest = True
+    discovery = open(datafile('plus.json')).read()
+    service = build_from_document(discovery, credentials=credentials)
+    self.assertEqual(service._http, credentials.authorize.return_value)
 
-    self.http = HttpMock(datafile('plus.json'), {'status': '200'})
-    build('plus', 'v1', http=self.http, credentials=None)
-    self.assertFalse(hasattr(self.http, 'orest'))
-    build('plus', 'v1', http=self.http, credentials=CredentialsMock())
-    self.assertTrue(hasattr(self.http, 'orest'))
+  def test_google_auth_credentials(self):
+    credentials = mock.Mock(spec=google.auth.credentials.Credentials)
+    discovery = open(datafile('plus.json')).read()
+    service = build_from_document(discovery, credentials=credentials)
+
+    self.assertIsInstance(service._http, google_auth_httplib2.AuthorizedHttp)
+    self.assertEqual(service._http.credentials, credentials)
+
+  def test_no_scopes_no_credentials(self):
+    # Zoo doesn't have scopes
+    discovery = open(datafile('zoo.json')).read()
+    service = build_from_document(discovery)
+    # Should be an ordinary httplib2.Http instance and not AuthorizedHttp.
+    self.assertIsInstance(service._http, httplib2.Http)
 
   def test_full_featured(self):
     # Zoo should exercise all discovery facets
@@ -773,6 +875,24 @@ class Discovery(unittest.TestCase):
         'https://www.googleapis.com/upload/zoo/v1/animals?uploadType=media&alt=json',
         request.uri)
 
+  def test_simple_media_unknown_mimetype(self):
+    self.http = HttpMock(datafile('zoo.json'), {'status': '200'})
+    zoo = build('zoo', 'v1', http=self.http)
+
+    try:
+      zoo.animals().insert(media_body=datafile('small-png'))
+      self.fail("should throw exception if mimetype is unknown.")
+    except UnknownFileType:
+      pass
+
+    request = zoo.animals().insert(media_body=datafile('small-png'),
+                                   media_mime_type='image/png')
+    self.assertEquals('image/png', request.headers['content-type'])
+    self.assertEquals(b'PNG', request.body[1:4])
+    assertUrisEqual(self,
+        'https://www.googleapis.com/upload/zoo/v1/animals?uploadType=media&alt=json',
+        request.uri)
+
   def test_multipart_media_raise_correct_exceptions(self):
     self.http = HttpMock(datafile('zoo.json'), {'status': '200'})
     zoo = build('zoo', 'v1', http=self.http)
@@ -842,10 +962,12 @@ class Discovery(unittest.TestCase):
       ({'status': '200',
         'location': 'http://upload.example.com'}, ''),
       ({'status': '308',
-        'location': 'http://upload.example.com/2',
-        'range': '0-12'}, ''),
+        'location': 'http://upload.example.com/2'}, ''),
       ({'status': '308',
         'location': 'http://upload.example.com/3',
+        'range': '0-12'}, ''),
+      ({'status': '308',
+        'location': 'http://upload.example.com/4',
         'range': '0-%d' % (media_upload.size() - 2)}, ''),
       ({'status': '200'}, '{"foo": "bar"}'),
       ])
@@ -853,17 +975,23 @@ class Discovery(unittest.TestCase):
     status, body = request.next_chunk(http=http)
     self.assertEquals(None, body)
     self.assertTrue(isinstance(status, MediaUploadProgress))
-    self.assertEquals(13, status.resumable_progress)
+    self.assertEquals(0, status.resumable_progress)
 
     # Two requests should have been made and the resumable_uri should have been
     # updated for each one.
     self.assertEquals(request.resumable_uri, 'http://upload.example.com/2')
-
+    self.assertEquals(media_upload, request.resumable)
+    self.assertEquals(0, request.resumable_progress)
+    
+    # This next chuck call should upload the first chunk
+    status, body = request.next_chunk(http=http)
+    self.assertEquals(request.resumable_uri, 'http://upload.example.com/3')
     self.assertEquals(media_upload, request.resumable)
     self.assertEquals(13, request.resumable_progress)
 
+    # This call will upload the next chunk
     status, body = request.next_chunk(http=http)
-    self.assertEquals(request.resumable_uri, 'http://upload.example.com/3')
+    self.assertEquals(request.resumable_uri, 'http://upload.example.com/4')
     self.assertEquals(media_upload.size()-1, request.resumable_progress)
     self.assertEquals('{"data": {}}', request.body)
 
@@ -1256,7 +1384,7 @@ class Discovery(unittest.TestCase):
         zoo_uri = util._add_query_parameter(zoo_uri, 'userIp',
                                             os.environ['REMOTE_ADDR'])
 
-    http = httplib2.Http()
+    http = build_http()
     original_request = http.request
     def wrapped_request(uri, method='GET', *args, **kwargs):
         if uri == zoo_uri:
@@ -1291,6 +1419,30 @@ class Discovery(unittest.TestCase):
     new_http = new_zoo._http
     self.assertFalse(hasattr(new_http.request, 'credentials'))
 
+  def test_resumable_media_upload_no_content(self):
+    self.http = HttpMock(datafile('zoo.json'), {'status': '200'})
+    zoo = build('zoo', 'v1', http=self.http)
+
+    media_upload = MediaFileUpload(datafile('empty'), resumable=True)
+    request = zoo.animals().insert(media_body=media_upload, body=None)
+
+    self.assertEquals(media_upload, request.resumable)
+    self.assertEquals(request.body, None)
+    self.assertEquals(request.resumable_uri, None)
+
+    http = HttpMockSequence([
+      ({'status': '200',
+        'location': 'http://upload.example.com'}, ''),
+      ({'status': '308',
+        'location': 'http://upload.example.com/2',
+        'range': '0-0'}, ''),
+    ])
+
+    status, body = request.next_chunk(http=http)
+    self.assertEquals(None, body)
+    self.assertTrue(isinstance(status, MediaUploadProgress))
+    self.assertEquals(0, status.progress())
+
 
 class Next(unittest.TestCase):
 
@@ -1318,10 +1470,45 @@ class Next(unittest.TestCase):
     q = parse_qs(parsed[4])
     self.assertEqual(q['pageToken'][0], '123abc')
 
+  def test_next_successful_with_next_page_token_alternate_name(self):
+    self.http = HttpMock(datafile('bigquery.json'), {'status': '200'})
+    bigquery = build('bigquery', 'v2', http=self.http)
+    request = bigquery.tabledata().list(datasetId='', projectId='', tableId='')
+    next_request = bigquery.tabledata().list_next(
+        request, {'pageToken': '123abc'})
+    parsed = list(urlparse(next_request.uri))
+    q = parse_qs(parsed[4])
+    self.assertEqual(q['pageToken'][0], '123abc')
+
+  def test_next_successful_with_next_page_token_in_body(self):
+    self.http = HttpMock(datafile('logging.json'), {'status': '200'})
+    logging = build('logging', 'v2', http=self.http)
+    request = logging.entries().list(body={})
+    next_request = logging.entries().list_next(
+        request, {'nextPageToken': '123abc'})
+    body = JsonModel().deserialize(next_request.body)
+    self.assertEqual(body['pageToken'], '123abc')
+
   def test_next_with_method_with_no_properties(self):
     self.http = HttpMock(datafile('latitude.json'), {'status': '200'})
     service = build('latitude', 'v1', http=self.http)
-    request = service.currentLocation().get()
+    service.currentLocation().get()
+
+  def test_next_nonexistent_with_no_next_page_token(self):
+    self.http = HttpMock(datafile('drive.json'), {'status': '200'})
+    drive = build('drive', 'v3', http=self.http)
+    drive.changes().watch(body={})
+    self.assertFalse(callable(getattr(drive.changes(), 'watch_next', None)))
+
+  def test_next_successful_with_next_page_token_required(self):
+    self.http = HttpMock(datafile('drive.json'), {'status': '200'})
+    drive = build('drive', 'v3', http=self.http)
+    request = drive.changes().list(pageToken='startPageToken')
+    next_request = drive.changes().list_next(
+        request, {'nextPageToken': '123abc'})
+    parsed = list(urlparse(next_request.uri))
+    q = parse_qs(parsed[4])
+    self.assertEqual(q['pageToken'][0], '123abc')
 
 
 class MediaGet(unittest.TestCase):

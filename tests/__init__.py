@@ -15,8 +15,10 @@ from __future__ import absolute_import
 
 __author__ = 'afshar@google.com (Ali Afshar)'
 
-import oauth2client.util
+
+from googleapiclient import _helpers as util
+
 
 def setup_package():
   """Run on testing package."""
-  oauth2client.util.positional_parameters_enforcement = 'EXCEPTION'
+  util.positional_parameters_enforcement = 'EXCEPTION'
