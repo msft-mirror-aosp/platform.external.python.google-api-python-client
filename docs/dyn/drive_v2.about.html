@@ -109,6 +109,13 @@ Returns:
     ],
     "quotaBytesUsedAggregate": "A String", # The number of quota bytes used by all Google apps (Drive, Picasa, etc.).
     "permissionId": "A String", # The current user's ID as visible in the permissions collection.
+    "teamDriveThemes": [ # A list of themes that are supported for Team Drives.
+      {
+        "colorRgb": "A String", # The color of this Team Drive theme as an RGB hex string.
+        "backgroundImageLink": "A String", # A link to this Team Drive theme's background image.
+        "id": "A String", # The ID of the theme.
+      },
+    ],
     "etag": "A String", # The ETag of the item.
     "largestChangeId": "A String", # The largest change id.
     "quotaBytesUsedInTrash": "A String", # The number of quota bytes used by trashed items.
@@ -131,7 +138,7 @@ Returns:
         "type": "A String", # The content type that this additional role info applies to.
       },
     ],
-    "user": { # The JSON template for a user. # The authenticated user.
+    "user": { # Information about a Drive user. # The authenticated user.
       "picture": { # The user's profile picture.
         "url": "A String", # A URL that points to a profile picture of this user.
       },
@@ -153,7 +160,7 @@ Returns:
     "kind": "drive#about", # This is always drive#about.
     "name": "A String", # The name of the current user.
     "quotaBytesTotal": "A String", # The total number of quota bytes.
-    "remainingChangeIds": "A String", # The number of remaining change ids.
+    "remainingChangeIds": "A String", # The number of remaining change ids, limited to no more than 2500.
     "importFormats": [ # The allowable import formats.
       {
         "source": "A String", # The imported file's content type to convert from.

@@ -65,7 +65,7 @@ __author__ = 'jcgregorio@google.com (Joe Gregorio)'
 
 import copy
 
-from oauth2client import util
+from googleapiclient import _helpers as util
 
 
 class Schemas(object):
@@ -156,13 +156,14 @@ class Schemas(object):
     # Return with trailing comma and newline removed.
     return self._prettyPrintSchema(schema, dent=1)[:-2]
 
-  def get(self, name):
+  def get(self, name, default=None):
     """Get deserialized JSON schema from the schema name.
 
     Args:
       name: string, Schema name.
+      default: object, return value if name not found.
     """
-    return self.schemas[name]
+    return self.schemas.get(name, default)
 
 
 class _SchemaToStruct(object):
