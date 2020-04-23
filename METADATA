@@ -9,10 +9,10 @@ third_party {
     type: GIT
     value: "https://github.com/google/google-api-python-client"
   }
-  version: "v1.8.1"
+  version: "v1.7.12"
   last_upgrade_date {
     year: 2020
-    month: 4
-    day: 20
+    month: 3
+    day: 11
   }
 }
