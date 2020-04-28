@@ -149,6 +149,10 @@ Documentation for the Google+ API in
     <td><a href="plus">samples/plus</a></td>
     <td>Loop over all a user's activities and print a short snippet</td>
   </tr>
+  <tr>
+    <td><a href="django_sample">samples/django_sample</a></td>
+    <td>Demonstrates oauth2client and the Google+ API from Django</td>
+  </tr>
 </table>
 
 ## ![](http://www.google.com/images/icons/feature/predictionapi-32.png) Prediction API
@@ -290,6 +294,10 @@ Documentation for the YouTube Data API in
     Engine applications</td>
   </tr>
   <tr>
+    <td><a href="django_sample">samples/django_sample</a></td>
+    <td>Demonstrates oauth2client and the Google+ API from Django</td>
+  </tr>
+  <tr>
     <td><a href="service_account">samples/service_account</a></td>
     <td>Demonstrates working with service accounts</td>
   </tr>
@@ -306,6 +314,15 @@ Documentation for the YouTube Data API in
   <tr>
     <td><a href="youtube">samples/youtube</a></td>
     <td>Demonstrates YouTube APIs</td>
+  </tr>
+</table>
+
+# Django Samples
+
+<table>
+  <tr>
+    <td><a href="django_sample">samples/django_sample</a></td>
+    <td>Demonstrates oauth2client and the Google+ API from Django</td>
   </tr>
 </table>
 

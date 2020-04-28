@@ -72,7 +72,7 @@ h1, h2, h3 {
 
 </style>
 
-<h1><a href="language_v1beta1.html">Cloud Natural Language API</a> . <a href="language_v1beta1.documents.html">documents</a></h1>
+<h1><a href="language_v1beta1.html">Google Cloud Natural Language API</a> . <a href="language_v1beta1.documents.html">documents</a></h1>
 <h2>Instance Methods</h2>
 <p class="toc_element">
   <code><a href="#analyzeEntities">analyzeEntities(body, x__xgafv=None)</a></code></p>
@@ -103,7 +103,6 @@ Args:
         #
         # Represents the input to API methods.
       "content": "A String", # The content of the input in string format.
-          # Cloud audit logging exempt since it is based on user data.
       "type": "A String", # Required. If the type is not set or is `TYPE_UNSPECIFIED`,
           # returns an `INVALID_ARGUMENT` error.
       "language": "A String", # The language of the document (if not specified, the language is
@@ -134,12 +133,6 @@ Returns:
       { # Represents a phrase in the text that is a known entity, such as
           # a person, an organization, or location. The API associates information, such
           # as salience and mentions, with entities.
-        "salience": 3.14, # The salience score associated with the entity in the [0, 1.0] range.
-            #
-            # The salience score for an entity provides information about the
-            # importance or centrality of that entity to the entire document text.
-            # Scores closer to 0 are less salient, while scores closer to 1.0 are highly
-            # salient.
         "mentions": [ # The mentions of this entity in the input document. The API currently
             # supports proper noun mentions.
           { # Represents a mention for an entity in the text. Currently, proper noun
@@ -152,6 +145,12 @@ Returns:
             "type": "A String", # The type of the entity mention.
           },
         ],
+        "salience": 3.14, # The salience score associated with the entity in the [0, 1.0] range.
+            #
+            # The salience score for an entity provides information about the
+            # importance or centrality of that entity to the entire document text.
+            # Scores closer to 0 are less salient, while scores closer to 1.0 are highly
+            # salient.
         "type": "A String", # The entity type.
         "name": "A String", # The representative name for the entity.
         "metadata": { # Metadata associated with the entity.
@@ -183,7 +182,6 @@ Args:
         #
         # Represents the input to API methods.
       "content": "A String", # The content of the input in string format.
-          # Cloud audit logging exempt since it is based on user data.
       "type": "A String", # Required. If the type is not set or is `TYPE_UNSPECIFIED`,
           # returns an `INVALID_ARGUMENT` error.
       "language": "A String", # The language of the document (if not specified, the language is
@@ -265,7 +263,6 @@ Args:
         #
         # Represents the input to API methods.
       "content": "A String", # The content of the input in string format.
-          # Cloud audit logging exempt since it is based on user data.
       "type": "A String", # Required. If the type is not set or is `TYPE_UNSPECIFIED`,
           # returns an `INVALID_ARGUMENT` error.
       "language": "A String", # The language of the document (if not specified, the language is
@@ -301,17 +298,17 @@ Returns:
         },
         "partOfSpeech": { # Represents part of speech information for a token. # Parts of speech tag for this token.
           "case": "A String", # The grammatical case.
-          "aspect": "A String", # The grammatical aspect.
+          "reciprocity": "A String", # The grammatical reciprocity.
+          "mood": "A String", # The grammatical mood.
           "form": "A String", # The grammatical form.
           "gender": "A String", # The grammatical gender.
           "number": "A String", # The grammatical number.
           "person": "A String", # The grammatical person.
           "tag": "A String", # The part of speech tag.
           "tense": "A String", # The grammatical tense.
-          "reciprocity": "A String", # The grammatical reciprocity.
+          "aspect": "A String", # The grammatical aspect.
           "proper": "A String", # The grammatical properness.
           "voice": "A String", # The grammatical voice.
-          "mood": "A String", # The grammatical mood.
         },
         "dependencyEdge": { # Represents dependency parse tree information for a token. # Dependency tree parse for this token.
           "headTokenIndex": 42, # Represents the head of this token in the dependency tree.
@@ -374,7 +371,6 @@ Args:
         #
         # Represents the input to API methods.
       "content": "A String", # The content of the input in string format.
-          # Cloud audit logging exempt since it is based on user data.
       "type": "A String", # Required. If the type is not set or is `TYPE_UNSPECIFIED`,
           # returns an `INVALID_ARGUMENT` error.
       "language": "A String", # The language of the document (if not specified, the language is
@@ -412,17 +408,17 @@ Returns:
         },
         "partOfSpeech": { # Represents part of speech information for a token. # Parts of speech tag for this token.
           "case": "A String", # The grammatical case.
-          "aspect": "A String", # The grammatical aspect.
+          "reciprocity": "A String", # The grammatical reciprocity.
+          "mood": "A String", # The grammatical mood.
           "form": "A String", # The grammatical form.
           "gender": "A String", # The grammatical gender.
           "number": "A String", # The grammatical number.
           "person": "A String", # The grammatical person.
           "tag": "A String", # The part of speech tag.
           "tense": "A String", # The grammatical tense.
-          "reciprocity": "A String", # The grammatical reciprocity.
+          "aspect": "A String", # The grammatical aspect.
           "proper": "A String", # The grammatical properness.
           "voice": "A String", # The grammatical voice.
-          "mood": "A String", # The grammatical mood.
         },
         "dependencyEdge": { # Represents dependency parse tree information for a token. # Dependency tree parse for this token.
           "headTokenIndex": 42, # Represents the head of this token in the dependency tree.
@@ -441,12 +437,6 @@ Returns:
       { # Represents a phrase in the text that is a known entity, such as
           # a person, an organization, or location. The API associates information, such
           # as salience and mentions, with entities.
-        "salience": 3.14, # The salience score associated with the entity in the [0, 1.0] range.
-            #
-            # The salience score for an entity provides information about the
-            # importance or centrality of that entity to the entire document text.
-            # Scores closer to 0 are less salient, while scores closer to 1.0 are highly
-            # salient.
         "mentions": [ # The mentions of this entity in the input document. The API currently
             # supports proper noun mentions.
           { # Represents a mention for an entity in the text. Currently, proper noun
@@ -459,6 +449,12 @@ Returns:
             "type": "A String", # The type of the entity mention.
           },
         ],
+        "salience": 3.14, # The salience score associated with the entity in the [0, 1.0] range.
+            #
+            # The salience score for an entity provides information about the
+            # importance or centrality of that entity to the entire document text.
+            # Scores closer to 0 are less salient, while scores closer to 1.0 are highly
+            # salient.
         "type": "A String", # The entity type.
         "name": "A String", # The representative name for the entity.
         "metadata": { # Metadata associated with the entity.

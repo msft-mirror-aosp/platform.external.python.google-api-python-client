@@ -26,14 +26,12 @@ __author__ = 'jcgregorio@google.com (Joe Gregorio)'
 
 import json
 import logging
-import platform
 
 from six.moves.urllib.parse import urlencode
 
 from googleapiclient import __version__
 from googleapiclient.errors import HttpError
 
-_PY_VERSION = platform.python_version()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -146,12 +144,7 @@ class BaseModel(Model):
       headers['user-agent'] += ' '
     else:
       headers['user-agent'] = ''
-    headers['user-agent'] += '(gzip)'
-    if 'x-goog-api-client' in headers:
-      headers['x-goog-api-client'] += ' '
-    else:
-      headers['x-goog-api-client'] = ''
-    headers['x-goog-api-client'] += 'gdcl/%s gl-python/%s' % (__version__, _PY_VERSION)
+    headers['user-agent'] += 'google-api-python-client/%s (gzip)' % __version__
 
     if body_value is not None:
       headers['content-type'] = self.content_type

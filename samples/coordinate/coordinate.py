@@ -45,8 +45,6 @@ import sys
 
 from oauth2client import client
 from googleapiclient import sample_tools
-from googleapiclient.discovery import build
-from googleapiclient.discovery import http
 
 # Declare command-line flags.
 argparser = argparse.ArgumentParser(add_help=False)
@@ -63,7 +61,7 @@ def main(argv):
 
   try:
     # List all the jobs for a team
-    jobs_result = service.jobs().list(teamId=flags.teamId).execute(http=http)
+    jobs_result = service.jobs().list(teamId=FLAGS.teamId).execute(http=http)
 
     print('List of Jobs:')
     pprint.pprint(jobs_result)
@@ -94,7 +92,7 @@ def main(argv):
 
     pprint.pprint(update_result)
 
-  except client.AccessTokenRefreshError as e:
+  except AccessTokenRefreshError as e:
     print ('The credentials have been revoked or expired, please re-run'
       'the application to re-authorize')
 
