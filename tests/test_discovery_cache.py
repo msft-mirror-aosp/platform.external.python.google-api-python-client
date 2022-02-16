@@ -18,7 +18,7 @@
 """Discovery document cache tests."""
 
 import datetime
-import unittest
+import unittest2 as unittest
 
 import mock
 
