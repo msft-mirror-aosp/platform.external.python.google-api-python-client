@@ -17,7 +17,10 @@
 import functools
 import inspect
 import logging
-import urllib
+import warnings
+
+import six
+from six.moves import urllib
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +40,7 @@ _MISSING_FILE_MESSAGE = "Cannot access {0}: No such file or directory"
 
 
 def positional(max_positional_args):
-    """A decorator to declare that only the first N arguments may be positional.
+    """A decorator to declare that only the first N arguments my be positional.
 
     This decorator makes it easy to support Python 3 style keyword-only
     parameters. For example, in Python 3 it is possible to write::
@@ -132,7 +135,7 @@ def positional(max_positional_args):
 
         return positional_wrapper
 
-    if isinstance(max_positional_args, int):
+    if isinstance(max_positional_args, six.integer_types):
         return positional_decorator
     else:
         args, _, _, defaults = inspect.getargspec(max_positional_args)
@@ -153,7 +156,7 @@ def parse_unique_urlencoded(content):
     """
     urlencoded_params = urllib.parse.parse_qs(content)
     params = {}
-    for key, value in urlencoded_params.items():
+    for key, value in six.iteritems(urlencoded_params):
         if len(value) != 1:
             msg = "URL-encoded content contains a repeated value:" "%s -> %s" % (
                 key,
