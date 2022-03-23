@@ -1,5 +1,7 @@
 """Retain apiclient as an alias for googleapiclient."""
 
+from six import iteritems
+
 import googleapiclient
 
 from googleapiclient import channel
@@ -17,6 +19,8 @@ except ImportError:
     sample_tools = None
 from googleapiclient import schema
 
+__version__ = googleapiclient.__version__
+
 _SUBMODULES = {
     "channel": channel,
     "discovery": discovery,
@@ -30,5 +34,5 @@ _SUBMODULES = {
 
 import sys
 
-for module_name, module in _SUBMODULES.items():
+for module_name, module in iteritems(_SUBMODULES):
     sys.modules["apiclient.%s" % module_name] = module
