@@ -65,8 +65,5 @@ python_library {
         "py-oauth2client",
         "py-six",
         "py-uritemplate",
-        "py-python-api-core",
-        "py-google-auth-library-python",
-        "py-cachetools",
     ],
 }
