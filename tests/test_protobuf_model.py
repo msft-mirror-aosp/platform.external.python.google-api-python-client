@@ -22,10 +22,14 @@ from __future__ import absolute_import
 
 __author__ = "mmcdonald@google.com (Matt McDonald)"
 
-import unittest
+import unittest2 as unittest
 import httplib2
+import googleapiclient.model
 
+from googleapiclient.errors import HttpError
 from googleapiclient.model import ProtocolBufferModel
+
+from six.moves.urllib.parse import parse_qs
 
 
 class MockProtocolBuffer(object):

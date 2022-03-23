@@ -21,32 +21,28 @@
 Unit tests for objects created from discovery documents.
 """
 from __future__ import absolute_import
+import six
 
 __author__ = "jcgregorio@google.com (Joe Gregorio)"
 
-from collections import defaultdict
+from six import BytesIO, StringIO
+from six.moves.urllib.parse import urlparse, parse_qs
+
 import copy
 import datetime
 import httplib2
-import io
 import itertools
 import json
 import os
 import pickle
 import re
 import sys
-import unittest
-import urllib
+import unittest2 as unittest
 
-from parameterized import parameterized
 import mock
 
 import google.auth.credentials
-from google.auth.transport import mtls
-from google.auth.exceptions import MutualTLSChannelError
 import google_auth_httplib2
-import google.api_core.exceptions
-
 from googleapiclient.discovery import _fix_up_media_upload
 from googleapiclient.discovery import _fix_up_method_description
 from googleapiclient.discovery import _fix_up_parameters
@@ -60,8 +56,6 @@ from googleapiclient.discovery import MEDIA_MIME_TYPE_PARAMETER_DEFAULT_VALUE
 from googleapiclient.discovery import ResourceMethodParameters
 from googleapiclient.discovery import STACK_QUERY_PARAMETERS
 from googleapiclient.discovery import STACK_QUERY_PARAMETER_DEFAULT_VALUE
-from googleapiclient.discovery import V1_DISCOVERY_URI
-from googleapiclient.discovery import V2_DISCOVERY_URI
 from googleapiclient.discovery_cache import DISCOVERY_DOC_MAX_AGE
 from googleapiclient.discovery_cache.base import Cache
 from googleapiclient.errors import HttpError
@@ -85,7 +79,6 @@ from googleapiclient.schema import Schemas
 from oauth2client import GOOGLE_TOKEN_URI
 from oauth2client.client import OAuth2Credentials, GoogleCredentials
 
-
 from googleapiclient import _helpers as util
 
 import uritemplate
@@ -96,46 +89,23 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 def assertUrisEqual(testcase, expected, actual):
     """Test that URIs are the same, up to reordering of query parameters."""
-    expected = urllib.parse.urlparse(expected)
-    actual = urllib.parse.urlparse(actual)
+    expected = urlparse(expected)
+    actual = urlparse(actual)
     testcase.assertEqual(expected.scheme, actual.scheme)
     testcase.assertEqual(expected.netloc, actual.netloc)
     testcase.assertEqual(expected.path, actual.path)
     testcase.assertEqual(expected.params, actual.params)
     testcase.assertEqual(expected.fragment, actual.fragment)
-    expected_query = urllib.parse.parse_qs(expected.query)
-    actual_query = urllib.parse.parse_qs(actual.query)
+    expected_query = parse_qs(expected.query)
+    actual_query = parse_qs(actual.query)
     for name in list(expected_query.keys()):
         testcase.assertEqual(expected_query[name], actual_query[name])
     for name in list(actual_query.keys()):
         testcase.assertEqual(expected_query[name], actual_query[name])
 
 
-def assert_discovery_uri(testcase, actual, service_name, version, discovery):
-    """Assert that discovery URI used was the one that was expected
-    for a given service and version."""
-    params = {"api": service_name, "apiVersion": version}
-    expanded_requested_uri = uritemplate.expand(discovery, params)
-    assertUrisEqual(testcase, expanded_requested_uri, actual)
-
-
-def validate_discovery_requests(testcase, http_mock, service_name, version, discovery):
-    """Validates that there have > 0 calls to Http Discovery
-     and that LAST discovery URI used was the one that was expected
-    for a given service and version."""
-    testcase.assertTrue(len(http_mock.request_sequence) > 0)
-    if len(http_mock.request_sequence) > 0:
-        actual_uri = http_mock.request_sequence[-1][0]
-        assert_discovery_uri(testcase, actual_uri, service_name, version, discovery)
-
-
 def datafile(filename):
     return os.path.join(DATA_DIR, filename)
-
-
-def read_datafile(filename, mode="r"):
-    with open(datafile(filename), mode=mode) as f:
-        return f.read()
 
 
 class SetupHttplib2(unittest.TestCase):
@@ -146,7 +116,8 @@ class SetupHttplib2(unittest.TestCase):
 
 class Utilities(unittest.TestCase):
     def setUp(self):
-        self.zoo_root_desc = json.loads(read_datafile("zoo.json", "r"))
+        with open(datafile("zoo.json"), "r") as fh:
+            self.zoo_root_desc = json.loads(fh.read())
         self.zoo_get_method_desc = self.zoo_root_desc["methods"]["query"]
         self.zoo_animals_resource = self.zoo_root_desc["resources"]["animals"]
         self.zoo_insert_method_desc = self.zoo_animals_resource["methods"]["insert"]
@@ -173,7 +144,7 @@ class Utilities(unittest.TestCase):
                 STACK_QUERY_PARAMETER_DEFAULT_VALUE, parameters[param_name]
             )
 
-        for param_name, value in root_desc.get("parameters", {}).items():
+        for param_name, value in six.iteritems(root_desc.get("parameters", {})):
             self.assertEqual(value, parameters[param_name])
 
         return parameters
@@ -253,11 +224,7 @@ class Utilities(unittest.TestCase):
         final_max_size,
         final_media_path_url,
     ):
-        fake_root_desc = {
-            "rootUrl": "http://root/",
-            "servicePath": "fake/",
-            "mtlsRootUrl": "http://root/",
-        }
+        fake_root_desc = {"rootUrl": "http://root/", "servicePath": "fake/"}
         fake_path_url = "fake-path/"
 
         accept, max_size, media_path_url = _fix_up_media_upload(
@@ -436,17 +403,10 @@ class Utilities(unittest.TestCase):
         self.assertEqual(parameters.enum_params, {})
 
 
-class Discovery(unittest.TestCase):
-    def test_discovery_http_is_closed(self):
-        http = HttpMock(datafile("malformed.json"), {"status": "200"})
-        service = build("plus", "v1", credentials=mock.sentinel.credentials)
-        http.close.assert_called_once()
-
-
 class DiscoveryErrors(unittest.TestCase):
     def test_tests_should_be_run_with_strict_positional_enforcement(self):
         try:
-            plus = build("plus", "v1", None, static_discovery=False)
+            plus = build("plus", "v1", None)
             self.fail("should have raised a TypeError exception over missing http=.")
         except TypeError:
             pass
@@ -454,7 +414,7 @@ class DiscoveryErrors(unittest.TestCase):
     def test_failed_to_parse_discovery_json(self):
         self.http = HttpMock(datafile("malformed.json"), {"status": "200"})
         try:
-            plus = build("plus", "v1", http=self.http, cache_discovery=False, static_discovery=False)
+            plus = build("plus", "v1", http=self.http, cache_discovery=False)
             self.fail("should have raised an exception over malformed JSON.")
         except InvalidJsonError:
             pass
@@ -462,8 +422,8 @@ class DiscoveryErrors(unittest.TestCase):
     def test_unknown_api_name_or_version(self):
         http = HttpMockSequence(
             [
-                ({"status": "404"}, read_datafile("zoo.json", "rb")),
-                ({"status": "404"}, read_datafile("zoo.json", "rb")),
+                ({"status": "404"}, open(datafile("zoo.json"), "rb").read()),
+                ({"status": "404"}, open(datafile("zoo.json"), "rb").read()),
             ]
         )
         with self.assertRaises(UnknownApiNameOrVersion):
@@ -472,69 +432,44 @@ class DiscoveryErrors(unittest.TestCase):
     def test_credentials_and_http_mutually_exclusive(self):
         http = HttpMock(datafile("plus.json"), {"status": "200"})
         with self.assertRaises(ValueError):
-            build("plus", "v1", http=http, credentials=mock.sentinel.credentials, static_discovery=False)
-
-    def test_credentials_file_and_http_mutually_exclusive(self):
-        http = HttpMock(datafile("plus.json"), {"status": "200"})
-        with self.assertRaises(ValueError):
-            build(
-                "plus",
-                "v1",
-                http=http,
-                client_options=google.api_core.client_options.ClientOptions(
-                    credentials_file="credentials.json"
-                ),
-                static_discovery=False,
-            )
-
-    def test_credentials_and_credentials_file_mutually_exclusive(self):
-        with self.assertRaises(google.api_core.exceptions.DuplicateCredentialArgs):
-            build(
-                "plus",
-                "v1",
-                credentials=mock.sentinel.credentials,
-                client_options=google.api_core.client_options.ClientOptions(
-                    credentials_file="credentials.json"
-                ),
-                static_discovery=False,
-            )
+            build("plus", "v1", http=http, credentials=mock.sentinel.credentials)
 
 
 class DiscoveryFromDocument(unittest.TestCase):
     MOCK_CREDENTIALS = mock.Mock(spec=google.auth.credentials.Credentials)
 
     def test_can_build_from_local_document(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         plus = build_from_document(
             discovery,
             base="https://www.googleapis.com/",
             credentials=self.MOCK_CREDENTIALS,
         )
-        self.assertIsNotNone(plus)
+        self.assertTrue(plus is not None)
         self.assertTrue(hasattr(plus, "activities"))
 
     def test_can_build_from_local_deserialized_document(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         discovery = json.loads(discovery)
         plus = build_from_document(
             discovery,
             base="https://www.googleapis.com/",
             credentials=self.MOCK_CREDENTIALS,
         )
-        self.assertIsNotNone(plus)
+        self.assertTrue(plus is not None)
         self.assertTrue(hasattr(plus, "activities"))
 
     def test_building_with_base_remembers_base(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
 
         base = "https://www.example.com/"
         plus = build_from_document(
             discovery, base=base, credentials=self.MOCK_CREDENTIALS
         )
-        self.assertEqual("https://www.googleapis.com/plus/v1/", plus._baseUrl)
+        self.assertEquals("https://www.googleapis.com/plus/v1/", plus._baseUrl)
 
     def test_building_with_optional_http_with_authorization(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         plus = build_from_document(
             discovery,
             base="https://www.googleapis.com/",
@@ -548,7 +483,7 @@ class DiscoveryFromDocument(unittest.TestCase):
         self.assertGreater(plus._http.http.timeout, 0)
 
     def test_building_with_optional_http_with_no_authorization(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         # Cleanup auth field, so we would use plain http client
         discovery = json.loads(discovery)
         discovery["auth"] = {}
@@ -564,14 +499,14 @@ class DiscoveryFromDocument(unittest.TestCase):
 
     def test_building_with_explicit_http(self):
         http = HttpMock()
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         plus = build_from_document(
             discovery, base="https://www.googleapis.com/", http=http
         )
-        self.assertEqual(plus._http, http)
+        self.assertEquals(plus._http, http)
 
     def test_building_with_developer_key_skips_adc(self):
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         plus = build_from_document(
             discovery, base="https://www.googleapis.com/", developerKey="123"
         )
@@ -579,359 +514,6 @@ class DiscoveryFromDocument(unittest.TestCase):
         # It should not be an AuthorizedHttp, because that would indicate that
         # application default credentials were used.
         self.assertNotIsInstance(plus._http, google_auth_httplib2.AuthorizedHttp)
-
-    def test_building_with_context_manager(self):
-        discovery = read_datafile("plus.json")
-        with mock.patch("httplib2.Http") as http:
-            with build_from_document(discovery, base="https://www.googleapis.com/", credentials=self.MOCK_CREDENTIALS) as plus:
-                self.assertIsNotNone(plus)
-                self.assertTrue(hasattr(plus, "activities"))
-            plus._http.http.close.assert_called_once()
-
-    def test_resource_close(self):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch("httplib2.Http", autospec=True) as httplib2_http:
-            http = httplib2_http()
-            plus = build_from_document(
-                discovery,
-                base="https://www.googleapis.com/",
-                http=http,
-            )
-            plus.close()
-            http.close.assert_called_once()
-
-    def test_resource_close_authorized_http(self):
-        discovery = read_datafile("plus.json")
-        with mock.patch("google_auth_httplib2.AuthorizedHttp", autospec=True):
-            plus = build_from_document(
-                discovery,
-                base="https://www.googleapis.com/",
-                credentials=self.MOCK_CREDENTIALS,
-            )
-            plus.close()
-            plus._http.close.assert_called_once()
-
-    def test_api_endpoint_override_from_client_options(self):
-        discovery = read_datafile("plus.json")
-        api_endpoint = "https://foo.googleapis.com/"
-        options = google.api_core.client_options.ClientOptions(
-            api_endpoint=api_endpoint
-        )
-        plus = build_from_document(
-            discovery, client_options=options, credentials=self.MOCK_CREDENTIALS
-        )
-
-        self.assertEqual(plus._baseUrl, api_endpoint)
-
-    def test_api_endpoint_override_from_client_options_mapping_object(self):
-
-        discovery = read_datafile("plus.json")
-        api_endpoint = "https://foo.googleapis.com/"
-        mapping_object = defaultdict(str)
-        mapping_object["api_endpoint"] = api_endpoint
-        plus = build_from_document(
-            discovery, client_options=mapping_object, credentials=self.MOCK_CREDENTIALS
-        )
-
-        self.assertEqual(plus._baseUrl, api_endpoint)
-
-    def test_api_endpoint_override_from_client_options_dict(self):
-        discovery = read_datafile("plus.json")
-        api_endpoint = "https://foo.googleapis.com/"
-        plus = build_from_document(
-            discovery,
-            client_options={"api_endpoint": api_endpoint},
-            credentials=self.MOCK_CREDENTIALS,
-        )
-
-        self.assertEqual(plus._baseUrl, api_endpoint)
-
-    def test_scopes_from_client_options(self):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch("googleapiclient._auth.default_credentials") as default:
-            plus = build_from_document(
-                discovery, client_options={"scopes": ["1", "2"]},
-            )
-
-        default.assert_called_once_with(scopes=["1", "2"], quota_project_id=None)
-
-    def test_quota_project_from_client_options(self):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch("googleapiclient._auth.default_credentials") as default:
-            plus = build_from_document(
-                discovery,
-                client_options=google.api_core.client_options.ClientOptions(
-                    quota_project_id="my-project"
-                ),
-            )
-
-        default.assert_called_once_with(scopes=None, quota_project_id="my-project")
-
-    def test_credentials_file_from_client_options(self):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch("googleapiclient._auth.credentials_from_file") as default:
-            plus = build_from_document(
-                discovery,
-                client_options=google.api_core.client_options.ClientOptions(
-                    credentials_file="credentials.json"
-                ),
-            )
-
-        default.assert_called_once_with(
-            "credentials.json", scopes=None, quota_project_id=None
-        )
-
-    def test_self_signed_jwt_enabled(self):
-        service_account_file_path = os.path.join(DATA_DIR, "service_account.json")
-        creds = google.oauth2.service_account.Credentials.from_service_account_file(service_account_file_path)
-
-        discovery = read_datafile("logging.json")
-
-        with mock.patch("google.oauth2.service_account.Credentials._create_self_signed_jwt") as _create_self_signed_jwt:
-            build_from_document(
-                discovery,
-                credentials=creds,
-                always_use_jwt_access=True,
-            )
-            _create_self_signed_jwt.assert_called_with("https://logging.googleapis.com/")
-
-    def test_self_signed_jwt_disabled(self):
-        service_account_file_path = os.path.join(DATA_DIR, "service_account.json")
-        creds = google.oauth2.service_account.Credentials.from_service_account_file(service_account_file_path)
-
-        discovery = read_datafile("logging.json")
-
-        with mock.patch("google.oauth2.service_account.Credentials._create_self_signed_jwt") as _create_self_signed_jwt:
-            build_from_document(
-                discovery,
-                credentials=creds,
-            )
-            _create_self_signed_jwt.assert_not_called()
-
-
-REGULAR_ENDPOINT = "https://www.googleapis.com/plus/v1/"
-MTLS_ENDPOINT = "https://www.mtls.googleapis.com/plus/v1/"
-
-
-class DiscoveryFromDocumentMutualTLS(unittest.TestCase):
-    MOCK_CREDENTIALS = mock.Mock(spec=google.auth.credentials.Credentials)
-    ADC_CERT_PATH = "adc_cert_path"
-    ADC_KEY_PATH = "adc_key_path"
-    ADC_PASSPHRASE = "adc_passphrase"
-
-    def check_http_client_cert(self, resource, has_client_cert="false"):
-        if isinstance(resource._http, google_auth_httplib2.AuthorizedHttp):
-            certs = list(resource._http.http.certificates.iter(""))
-        else:
-            certs = list(resource._http.certificates.iter(""))
-        if has_client_cert == "true":
-            self.assertEqual(len(certs), 1)
-            self.assertEqual(
-                certs[0], (self.ADC_KEY_PATH, self.ADC_CERT_PATH, self.ADC_PASSPHRASE)
-            )
-        else:
-            self.assertEqual(len(certs), 0)
-
-    def client_encrypted_cert_source(self):
-        return self.ADC_CERT_PATH, self.ADC_KEY_PATH, self.ADC_PASSPHRASE
-
-    @parameterized.expand(
-        [
-            ("never", "true"),
-            ("auto", "true"),
-            ("always", "true"),
-            ("never", "false"),
-            ("auto", "false"),
-            ("always", "false"),
-        ]
-    )
-    def test_mtls_not_trigger_if_http_provided(self, use_mtls_env, use_client_cert):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                plus = build_from_document(discovery, http=httplib2.Http())
-                self.assertIsNotNone(plus)
-                self.assertEqual(plus._baseUrl, REGULAR_ENDPOINT)
-                self.check_http_client_cert(plus, has_client_cert="false")
-
-    @parameterized.expand(
-        [
-            ("never", "true"),
-            ("auto", "true"),
-            ("always", "true"),
-            ("never", "false"),
-            ("auto", "false"),
-            ("always", "false"),
-        ]
-    )
-    def test_exception_with_client_cert_source(self, use_mtls_env, use_client_cert):
-        discovery = read_datafile("plus.json")
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                with self.assertRaises(MutualTLSChannelError):
-                    build_from_document(
-                        discovery,
-                        credentials=self.MOCK_CREDENTIALS,
-                        client_options={"client_cert_source": mock.Mock()},
-                    )
-
-    @parameterized.expand(
-        [
-            ("never", "true", REGULAR_ENDPOINT),
-            ("auto", "true", MTLS_ENDPOINT),
-            ("always", "true", MTLS_ENDPOINT),
-            ("never", "false", REGULAR_ENDPOINT),
-            ("auto", "false", REGULAR_ENDPOINT),
-            ("always", "false", MTLS_ENDPOINT),
-        ]
-    )
-    def test_mtls_with_provided_client_cert(
-        self, use_mtls_env, use_client_cert, base_url
-    ):
-        discovery = read_datafile("plus.json")
-
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                plus = build_from_document(
-                    discovery,
-                    credentials=self.MOCK_CREDENTIALS,
-                    client_options={
-                        "client_encrypted_cert_source": self.client_encrypted_cert_source
-                    },
-                )
-                self.assertIsNotNone(plus)
-                self.check_http_client_cert(plus, has_client_cert=use_client_cert)
-                self.assertEqual(plus._baseUrl, base_url)
-
-    @parameterized.expand(
-        [
-            ("never", "true"),
-            ("auto", "true"),
-            ("always", "true"),
-            ("never", "false"),
-            ("auto", "false"),
-            ("always", "false"),
-        ]
-    )
-    def test_endpoint_not_switch(self, use_mtls_env, use_client_cert):
-        # Test endpoint is not switched if user provided api endpoint
-        discovery = read_datafile("plus.json")
-
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                plus = build_from_document(
-                    discovery,
-                    credentials=self.MOCK_CREDENTIALS,
-                    client_options={
-                        "api_endpoint": "https://foo.googleapis.com",
-                        "client_encrypted_cert_source": self.client_encrypted_cert_source,
-                    },
-                )
-                self.assertIsNotNone(plus)
-                self.check_http_client_cert(plus, has_client_cert=use_client_cert)
-                self.assertEqual(plus._baseUrl, "https://foo.googleapis.com")
-
-    @parameterized.expand(
-        [
-            ("never", "true", REGULAR_ENDPOINT),
-            ("auto", "true", MTLS_ENDPOINT),
-            ("always", "true", MTLS_ENDPOINT),
-            ("never", "false", REGULAR_ENDPOINT),
-            ("auto", "false", REGULAR_ENDPOINT),
-            ("always", "false", MTLS_ENDPOINT),
-        ]
-    )
-    @mock.patch(
-        "google.auth.transport.mtls.has_default_client_cert_source", autospec=True
-    )
-    @mock.patch(
-        "google.auth.transport.mtls.default_client_encrypted_cert_source", autospec=True
-    )
-    def test_mtls_with_default_client_cert(
-        self,
-        use_mtls_env,
-        use_client_cert,
-        base_url,
-        default_client_encrypted_cert_source,
-        has_default_client_cert_source,
-    ):
-        has_default_client_cert_source.return_value = True
-        default_client_encrypted_cert_source.return_value = (
-            self.client_encrypted_cert_source
-        )
-        discovery = read_datafile("plus.json")
-
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                plus = build_from_document(
-                    discovery,
-                    credentials=self.MOCK_CREDENTIALS,
-                    adc_cert_path=self.ADC_CERT_PATH,
-                    adc_key_path=self.ADC_KEY_PATH,
-                )
-                self.assertIsNotNone(plus)
-                self.check_http_client_cert(plus, has_client_cert=use_client_cert)
-                self.assertEqual(plus._baseUrl, base_url)
-
-    @parameterized.expand(
-        [
-            ("never", "true", REGULAR_ENDPOINT),
-            ("auto", "true", REGULAR_ENDPOINT),
-            ("always", "true", MTLS_ENDPOINT),
-            ("never", "false", REGULAR_ENDPOINT),
-            ("auto", "false", REGULAR_ENDPOINT),
-            ("always", "false", MTLS_ENDPOINT),
-        ]
-    )
-    @mock.patch(
-        "google.auth.transport.mtls.has_default_client_cert_source", autospec=True
-    )
-    def test_mtls_with_no_client_cert(
-        self, use_mtls_env, use_client_cert, base_url, has_default_client_cert_source
-    ):
-        has_default_client_cert_source.return_value = False
-        discovery = read_datafile("plus.json")
-
-        with mock.patch.dict(
-            "os.environ", {"GOOGLE_API_USE_MTLS_ENDPOINT": use_mtls_env}
-        ):
-            with mock.patch.dict(
-                "os.environ", {"GOOGLE_API_USE_CLIENT_CERTIFICATE": use_client_cert}
-            ):
-                plus = build_from_document(
-                    discovery,
-                    credentials=self.MOCK_CREDENTIALS,
-                    adc_cert_path=self.ADC_CERT_PATH,
-                    adc_key_path=self.ADC_KEY_PATH,
-                )
-                self.assertIsNotNone(plus)
-                self.check_http_client_cert(plus, has_client_cert="false")
-                self.assertEqual(plus._baseUrl, base_url)
 
 
 class DiscoveryFromHttp(unittest.TestCase):
@@ -947,14 +529,14 @@ class DiscoveryFromHttp(unittest.TestCase):
         os.environ["REMOTE_ADDR"] = "10.0.0.1"
         try:
             http = HttpMockSequence(
-                [({"status": "400"}, read_datafile("zoo.json", "rb"))]
+                [({"status": "400"}, open(datafile("zoo.json"), "rb").read())]
             )
             zoo = build(
                 "zoo",
                 "v1",
                 http=http,
                 developerKey=None,
-                discoveryServiceUrl="http://example.com"
+                discoveryServiceUrl="http://example.com",
             )
             self.fail("Should have raised an exception.")
         except HttpError as e:
@@ -965,14 +547,14 @@ class DiscoveryFromHttp(unittest.TestCase):
         # out of the raised exception.
         try:
             http = HttpMockSequence(
-                [({"status": "400"}, read_datafile("zoo.json", "rb"))]
+                [({"status": "400"}, open(datafile("zoo.json"), "rb").read())]
             )
             zoo = build(
                 "zoo",
                 "v1",
                 http=http,
                 developerKey=None,
-                discoveryServiceUrl="http://example.com"
+                discoveryServiceUrl="http://example.com",
             )
             self.fail("Should have raised an exception.")
         except HttpError as e:
@@ -983,7 +565,7 @@ class DiscoveryFromHttp(unittest.TestCase):
         # out of the raised exception.
         try:
             http = HttpMockSequence(
-                [({"status": "400"}, read_datafile("zoo.json", "rb"))]
+                [({"status": "400"}, open(datafile("zoo.json"), "rb").read())]
             )
             zoo = build(
                 "zoo",
@@ -991,7 +573,6 @@ class DiscoveryFromHttp(unittest.TestCase):
                 http=http,
                 developerKey="foo",
                 discoveryServiceUrl="http://example.com",
-                static_discovery=False,
             )
             self.fail("Should have raised an exception.")
         except HttpError as e:
@@ -1001,142 +582,14 @@ class DiscoveryFromHttp(unittest.TestCase):
         http = HttpMockSequence(
             [
                 ({"status": "404"}, "Not found"),
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
+                ({"status": "200"}, open(datafile("zoo.json"), "rb").read()),
             ]
         )
-        zoo = build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
+        zoo = build("zoo", "v1", http=http, cache_discovery=False)
         self.assertTrue(hasattr(zoo, "animals"))
-
-    def test_api_endpoint_override_from_client_options(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "404"}, "Not found"),
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
-            ]
-        )
-        api_endpoint = "https://foo.googleapis.com/"
-        options = google.api_core.client_options.ClientOptions(
-            api_endpoint=api_endpoint
-        )
-        zoo = build(
-            "zoo", "v1", http=http, cache_discovery=False, client_options=options, static_discovery=False
-        )
-        self.assertEqual(zoo._baseUrl, api_endpoint)
-
-    def test_api_endpoint_override_from_client_options_dict(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "404"}, "Not found"),
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
-            ]
-        )
-        api_endpoint = "https://foo.googleapis.com/"
-        zoo = build(
-            "zoo",
-            "v1",
-            http=http,
-            cache_discovery=False,
-            client_options={"api_endpoint": api_endpoint},
-            static_discovery=False,
-        )
-        self.assertEqual(zoo._baseUrl, api_endpoint)
-
-    def test_discovery_with_empty_version_uses_v2(self):
-        http = HttpMockSequence([({"status": "200"}, read_datafile("zoo.json", "rb")),])
-        build("zoo", version=None, http=http, cache_discovery=False, static_discovery=False)
-        validate_discovery_requests(self, http, "zoo", None, V2_DISCOVERY_URI)
-
-    def test_discovery_with_empty_version_preserves_custom_uri(self):
-        http = HttpMockSequence([({"status": "200"}, read_datafile("zoo.json", "rb")),])
-        custom_discovery_uri = "https://foo.bar/$discovery"
-        build(
-            "zoo",
-            version=None,
-            http=http,
-            cache_discovery=False,
-            discoveryServiceUrl=custom_discovery_uri,
-            static_discovery=False,
-        )
-        validate_discovery_requests(self, http, "zoo", None, custom_discovery_uri)
-
-    def test_discovery_with_valid_version_uses_v1(self):
-        http = HttpMockSequence([({"status": "200"}, read_datafile("zoo.json", "rb")),])
-        build("zoo", version="v123", http=http, cache_discovery=False, static_discovery=False)
-        validate_discovery_requests(self, http, "zoo", "v123", V1_DISCOVERY_URI)
-
-
-class DiscoveryRetryFromHttp(unittest.TestCase):
-    def test_repeated_500_retries_and_fails(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "500"}, read_datafile("500.json", "rb")),
-                ({"status": "503"}, read_datafile("503.json", "rb")),
-            ]
-        )
-        with self.assertRaises(HttpError):
-            with mock.patch("time.sleep") as mocked_sleep:
-                build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
-
-        mocked_sleep.assert_called_once()
-        # We also want to verify that we stayed with v1 discovery
-        validate_discovery_requests(self, http, "zoo", "v1", V1_DISCOVERY_URI)
-
-    def test_v2_repeated_500_retries_and_fails(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "404"}, "Not found"),  # last v1 discovery call
-                ({"status": "500"}, read_datafile("500.json", "rb")),
-                ({"status": "503"}, read_datafile("503.json", "rb")),
-            ]
-        )
-        with self.assertRaises(HttpError):
-            with mock.patch("time.sleep") as mocked_sleep:
-                build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
-
-        mocked_sleep.assert_called_once()
-        # We also want to verify that we switched to v2 discovery
-        validate_discovery_requests(self, http, "zoo", "v1", V2_DISCOVERY_URI)
-
-    def test_single_500_retries_and_succeeds(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "500"}, read_datafile("500.json", "rb")),
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
-            ]
-        )
-        with mock.patch("time.sleep") as mocked_sleep:
-            zoo = build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
-
-        self.assertTrue(hasattr(zoo, "animals"))
-        mocked_sleep.assert_called_once()
-        # We also want to verify that we stayed with v1 discovery
-        validate_discovery_requests(self, http, "zoo", "v1", V1_DISCOVERY_URI)
-
-    def test_single_500_then_404_retries_and_succeeds(self):
-        http = HttpMockSequence(
-            [
-                ({"status": "500"}, read_datafile("500.json", "rb")),
-                ({"status": "404"}, "Not found"),  # last v1 discovery call
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
-            ]
-        )
-        with mock.patch("time.sleep") as mocked_sleep:
-            zoo = build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
-
-        self.assertTrue(hasattr(zoo, "animals"))
-        mocked_sleep.assert_called_once()
-        # We also want to verify that we switched to v2 discovery
-        validate_discovery_requests(self, http, "zoo", "v1", V2_DISCOVERY_URI)
 
 
 class DiscoveryFromAppEngineCache(unittest.TestCase):
-    def setUp(self):
-        self.old_environ = os.environ.copy()
-        os.environ["APPENGINE_RUNTIME"] = "python27"
-
-    def tearDown(self):
-        os.environ = self.old_environ
-
     def test_appengine_memcache(self):
         # Hack module import
         self.orig_import = __import__
@@ -1157,7 +610,7 @@ class DiscoveryFromAppEngineCache(unittest.TestCase):
 
             self.mocked_api.memcache.get.return_value = None
 
-            plus = build("plus", "v1", http=self.http, static_discovery=False)
+            plus = build("plus", "v1", http=self.http)
 
             # memcache.get is called once
             url = "https://www.googleapis.com/discovery/v1/apis/plus/v1/rest"
@@ -1166,7 +619,8 @@ class DiscoveryFromAppEngineCache(unittest.TestCase):
             )
 
             # memcache.set is called once
-            content = read_datafile("plus.json")
+            with open(datafile("plus.json")) as f:
+                content = f.read()
             self.mocked_api.memcache.set.assert_called_once_with(
                 url, content, time=DISCOVERY_DOC_MAX_AGE, namespace=namespace
             )
@@ -1178,7 +632,7 @@ class DiscoveryFromAppEngineCache(unittest.TestCase):
             # (Otherwise it should through an error)
             self.http = HttpMock(None, {"status": "200"})
 
-            plus = build("plus", "v1", http=self.http, static_discovery=False)
+            plus = build("plus", "v1", http=self.http)
 
             # memcache.get is called twice
             self.mocked_api.memcache.get.assert_has_calls(
@@ -1192,26 +646,6 @@ class DiscoveryFromAppEngineCache(unittest.TestCase):
             self.mocked_api.memcache.set.assert_called_once_with(
                 url, content, time=DISCOVERY_DOC_MAX_AGE, namespace=namespace
             )
-
-
-class DiscoveryFromStaticDocument(unittest.TestCase):
-    def test_retrieve_from_local_when_static_discovery_true(self):
-        http = HttpMockSequence([({"status": "400"}, "")])
-        drive = build("drive", "v3", http=http, cache_discovery=False,
-                          static_discovery=True)
-        self.assertIsNotNone(drive)
-        self.assertTrue(hasattr(drive, "files"))
-
-    def test_retrieve_from_internet_when_static_discovery_false(self):
-        http = HttpMockSequence([({"status": "400"}, "")])
-        with self.assertRaises(HttpError):
-            build("drive", "v3", http=http, cache_discovery=False,
-                      static_discovery=False)
-
-    def test_unknown_api_when_static_discovery_true(self):
-        with self.assertRaises(UnknownApiNameOrVersion):
-            build("doesnotexist", "v3", cache_discovery=False,
-                      static_discovery=True)
 
 
 class DictCache(Cache):
@@ -1236,14 +670,15 @@ class DiscoveryFromFileCache(unittest.TestCase):
         ):
             self.http = HttpMock(datafile("plus.json"), {"status": "200"})
 
-            plus = build("plus", "v1", http=self.http, static_discovery=False)
+            plus = build("plus", "v1", http=self.http)
 
             # cache.get is called once
             url = "https://www.googleapis.com/discovery/v1/apis/plus/v1/rest"
             cache.get.assert_called_once_with(url)
 
             # cache.set is called once
-            content = read_datafile("plus.json")
+            with open(datafile("plus.json")) as f:
+                content = f.read()
             cache.set.assert_called_once_with(url, content)
 
             # Make sure there is a cache entry for the plus v1 discovery doc.
@@ -1253,7 +688,7 @@ class DiscoveryFromFileCache(unittest.TestCase):
             # (Otherwise it should through an error)
             self.http = HttpMock(None, {"status": "200"})
 
-            plus = build("plus", "v1", http=self.http, static_discovery=False)
+            plus = build("plus", "v1", http=self.http)
 
             # cache.get is called twice
             cache.get.assert_has_calls([mock.call(url), mock.call(url)])
@@ -1265,7 +700,7 @@ class DiscoveryFromFileCache(unittest.TestCase):
 class Discovery(unittest.TestCase):
     def test_method_error_checking(self):
         self.http = HttpMock(datafile("plus.json"), {"status": "200"})
-        plus = build("plus", "v1", http=self.http, static_discovery=False)
+        plus = build("plus", "v1", http=self.http)
 
         # Missing required parameters
         try:
@@ -1296,8 +731,8 @@ class Discovery(unittest.TestCase):
             self.assertTrue("unexpected" in str(e))
 
     def _check_query_types(self, request):
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["q"], ["foo"])
         self.assertEqual(q["i"], ["1"])
         self.assertEqual(q["n"], ["1.0"])
@@ -1308,7 +743,7 @@ class Discovery(unittest.TestCase):
 
     def test_type_coercion(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
 
         request = zoo.query(
             q="foo", i=1.0, n=1.0, b=0, a=[1, 2, 3], o={"a": 1}, e="bar"
@@ -1341,46 +776,46 @@ class Discovery(unittest.TestCase):
 
     def test_optional_stack_query_parameters(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.query(trace="html", fields="description")
 
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["trace"], ["html"])
         self.assertEqual(q["fields"], ["description"])
 
     def test_string_params_value_of_none_get_dropped(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.query(trace=None, fields="description")
 
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertFalse("trace" in q)
 
     def test_model_added_query_parameters(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.animals().get(name="Lion")
 
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["alt"], ["json"])
         self.assertEqual(request.headers["accept"], "application/json")
 
     def test_fallback_to_raw_model(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.animals().getmedia(name="Lion")
 
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertTrue("alt" not in q)
         self.assertEqual(request.headers["accept"], "*/*")
 
     def test_patch(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.animals().patch(name="lion", body='{"description": "foo"}')
 
         self.assertEqual(request.method, "PATCH")
@@ -1388,7 +823,7 @@ class Discovery(unittest.TestCase):
     def test_batch_request_from_discovery(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
         # zoo defines a batchPath
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         batch_request = zoo.new_batch_http_request()
         self.assertEqual(
             batch_request._batch_uri, "https://www.googleapis.com/batchZoo"
@@ -1397,26 +832,26 @@ class Discovery(unittest.TestCase):
     def test_batch_request_from_default(self):
         self.http = HttpMock(datafile("plus.json"), {"status": "200"})
         # plus does not define a batchPath
-        plus = build("plus", "v1", http=self.http, cache_discovery=False, static_discovery=False)
+        plus = build("plus", "v1", http=self.http)
         batch_request = plus.new_batch_http_request()
         self.assertEqual(batch_request._batch_uri, "https://www.googleapis.com/batch")
 
     def test_tunnel_patch(self):
         http = HttpMockSequence(
             [
-                ({"status": "200"}, read_datafile("zoo.json", "rb")),
+                ({"status": "200"}, open(datafile("zoo.json"), "rb").read()),
                 ({"status": "200"}, "echo_request_headers_as_json"),
             ]
         )
         http = tunnel_patch(http)
-        zoo = build("zoo", "v1", http=http, cache_discovery=False, static_discovery=False)
+        zoo = build("zoo", "v1", http=http, cache_discovery=False)
         resp = zoo.animals().patch(name="lion", body='{"description": "foo"}').execute()
 
         self.assertTrue("x-http-method-override" in resp)
 
     def test_plus_resources(self):
         self.http = HttpMock(datafile("plus.json"), {"status": "200"})
-        plus = build("plus", "v1", http=self.http, static_discovery=False)
+        plus = build("plus", "v1", http=self.http)
         self.assertTrue(getattr(plus, "activities"))
         self.assertTrue(getattr(plus, "people"))
 
@@ -1424,13 +859,13 @@ class Discovery(unittest.TestCase):
         credentials = mock.Mock(spec=GoogleCredentials)
         credentials.create_scoped_required.return_value = False
 
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         service = build_from_document(discovery, credentials=credentials)
         self.assertEqual(service._http, credentials.authorize.return_value)
 
     def test_google_auth_credentials(self):
         credentials = mock.Mock(spec=google.auth.credentials.Credentials)
-        discovery = read_datafile("plus.json")
+        discovery = open(datafile("plus.json")).read()
         service = build_from_document(discovery, credentials=credentials)
 
         self.assertIsInstance(service._http, google_auth_httplib2.AuthorizedHttp)
@@ -1438,7 +873,7 @@ class Discovery(unittest.TestCase):
 
     def test_no_scopes_no_credentials(self):
         # Zoo doesn't have scopes
-        discovery = read_datafile("zoo.json")
+        discovery = open(datafile("zoo.json")).read()
         service = build_from_document(discovery)
         # Should be an ordinary httplib2.Http instance and not AuthorizedHttp.
         self.assertIsInstance(service._http, httplib2.Http)
@@ -1447,49 +882,58 @@ class Discovery(unittest.TestCase):
         # Zoo should exercise all discovery facets
         # and should also have no future.json file.
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         self.assertTrue(getattr(zoo, "animals"))
 
         request = zoo.animals().list(name="bat", projection="full")
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["name"], ["bat"])
         self.assertEqual(q["projection"], ["full"])
 
     def test_nested_resources(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         self.assertTrue(getattr(zoo, "animals"))
         request = zoo.my().favorites().list(max_results="5")
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["max-results"], ["5"])
+
+    @unittest.skipIf(six.PY3, "print is not a reserved name in Python 3")
+    def test_methods_with_reserved_names(self):
+        self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
+        zoo = build("zoo", "v1", http=self.http)
+        self.assertTrue(getattr(zoo, "animals"))
+        request = zoo.global_().print_().assert_(max_results="5")
+        parsed = urlparse(request.uri)
+        self.assertEqual(parsed[2], "/zoo/v1/global/print/assert")
 
     def test_top_level_functions(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         self.assertTrue(getattr(zoo, "query"))
         request = zoo.query(q="foo")
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["q"], ["foo"])
 
     def test_simple_media_uploads(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         doc = getattr(zoo.animals().insert, "__doc__")
         self.assertTrue("media_body" in doc)
 
     def test_simple_media_upload_no_max_size_provided(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
         request = zoo.animals().crossbreed(media_body=datafile("small.png"))
-        self.assertEqual("image/png", request.headers["content-type"])
-        self.assertEqual(b"PNG", request.body[1:4])
+        self.assertEquals("image/png", request.headers["content-type"])
+        self.assertEquals(b"PNG", request.body[1:4])
 
     def test_simple_media_raise_correct_exceptions(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         try:
             zoo.animals().insert(media_body=datafile("smiley.png"))
@@ -1505,11 +949,11 @@ class Discovery(unittest.TestCase):
 
     def test_simple_media_good_upload(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         request = zoo.animals().insert(media_body=datafile("small.png"))
-        self.assertEqual("image/png", request.headers["content-type"])
-        self.assertEqual(b"PNG", request.body[1:4])
+        self.assertEquals("image/png", request.headers["content-type"])
+        self.assertEquals(b"PNG", request.body[1:4])
         assertUrisEqual(
             self,
             "https://www.googleapis.com/upload/zoo/v1/animals?uploadType=media&alt=json",
@@ -1518,7 +962,7 @@ class Discovery(unittest.TestCase):
 
     def test_simple_media_unknown_mimetype(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         try:
             zoo.animals().insert(media_body=datafile("small-png"))
@@ -1529,8 +973,8 @@ class Discovery(unittest.TestCase):
         request = zoo.animals().insert(
             media_body=datafile("small-png"), media_mime_type="image/png"
         )
-        self.assertEqual("image/png", request.headers["content-type"])
-        self.assertEqual(b"PNG", request.body[1:4])
+        self.assertEquals("image/png", request.headers["content-type"])
+        self.assertEquals(b"PNG", request.body[1:4])
         assertUrisEqual(
             self,
             "https://www.googleapis.com/upload/zoo/v1/animals?uploadType=media&alt=json",
@@ -1539,7 +983,7 @@ class Discovery(unittest.TestCase):
 
     def test_multipart_media_raise_correct_exceptions(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         try:
             zoo.animals().insert(media_body=datafile("smiley.png"), body={})
@@ -1553,13 +997,14 @@ class Discovery(unittest.TestCase):
         except UnacceptableMimeTypeError:
             pass
 
-    def test_multipart_media_good_upload(self, static_discovery=False):
+    def test_multipart_media_good_upload(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         request = zoo.animals().insert(media_body=datafile("small.png"), body={})
         self.assertTrue(request.headers["content-type"].startswith("multipart/related"))
-        contents = read_datafile("small.png", "rb")
+        with open(datafile("small.png"), "rb") as f:
+            contents = f.read()
         boundary = re.match(b"--=+([^=]+)", request.body).group(1)
         self.assertEqual(
             request.body.rstrip(b"\n"),  # Python 2.6 does not add a trailing \n
@@ -1588,25 +1033,25 @@ class Discovery(unittest.TestCase):
 
     def test_media_capable_method_without_media(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         request = zoo.animals().insert(body={})
         self.assertTrue(request.headers["content-type"], "application/json")
 
     def test_resumable_multipart_media_good_upload(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("small.png"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body={})
         self.assertTrue(request.headers["content-type"].startswith("application/json"))
-        self.assertEqual('{"data": {}}', request.body)
-        self.assertEqual(media_upload, request.resumable)
+        self.assertEquals('{"data": {}}', request.body)
+        self.assertEquals(media_upload, request.resumable)
 
-        self.assertEqual("image/png", request.resumable.mimetype())
+        self.assertEquals("image/png", request.resumable.mimetype())
 
-        self.assertNotEqual(request.body, None)
-        self.assertEqual(request.resumable_uri, None)
+        self.assertNotEquals(request.body, None)
+        self.assertEquals(request.resumable_uri, None)
 
         http = HttpMockSequence(
             [
@@ -1633,46 +1078,46 @@ class Discovery(unittest.TestCase):
         )
 
         status, body = request.next_chunk(http=http)
-        self.assertEqual(None, body)
+        self.assertEquals(None, body)
         self.assertTrue(isinstance(status, MediaUploadProgress))
-        self.assertEqual(0, status.resumable_progress)
+        self.assertEquals(0, status.resumable_progress)
 
         # Two requests should have been made and the resumable_uri should have been
         # updated for each one.
-        self.assertEqual(request.resumable_uri, "http://upload.example.com/2")
-        self.assertEqual(media_upload, request.resumable)
-        self.assertEqual(0, request.resumable_progress)
+        self.assertEquals(request.resumable_uri, "http://upload.example.com/2")
+        self.assertEquals(media_upload, request.resumable)
+        self.assertEquals(0, request.resumable_progress)
 
         # This next chuck call should upload the first chunk
         status, body = request.next_chunk(http=http)
-        self.assertEqual(request.resumable_uri, "http://upload.example.com/3")
-        self.assertEqual(media_upload, request.resumable)
-        self.assertEqual(13, request.resumable_progress)
+        self.assertEquals(request.resumable_uri, "http://upload.example.com/3")
+        self.assertEquals(media_upload, request.resumable)
+        self.assertEquals(13, request.resumable_progress)
 
         # This call will upload the next chunk
         status, body = request.next_chunk(http=http)
-        self.assertEqual(request.resumable_uri, "http://upload.example.com/4")
-        self.assertEqual(media_upload.size() - 1, request.resumable_progress)
-        self.assertEqual('{"data": {}}', request.body)
+        self.assertEquals(request.resumable_uri, "http://upload.example.com/4")
+        self.assertEquals(media_upload.size() - 1, request.resumable_progress)
+        self.assertEquals('{"data": {}}', request.body)
 
         # Final call to next_chunk should complete the upload.
         status, body = request.next_chunk(http=http)
-        self.assertEqual(body, {"foo": "bar"})
-        self.assertEqual(status, None)
+        self.assertEquals(body, {"foo": "bar"})
+        self.assertEquals(status, None)
 
     def test_resumable_media_good_upload(self):
         """Not a multipart upload."""
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("small.png"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body=None)
-        self.assertEqual(media_upload, request.resumable)
+        self.assertEquals(media_upload, request.resumable)
 
-        self.assertEqual("image/png", request.resumable.mimetype())
+        self.assertEquals("image/png", request.resumable.mimetype())
 
-        self.assertEqual(request.body, None)
-        self.assertEqual(request.resumable_uri, None)
+        self.assertEquals(request.body, None)
+        self.assertEquals(request.resumable_uri, None)
 
         http = HttpMockSequence(
             [
@@ -1698,31 +1143,31 @@ class Discovery(unittest.TestCase):
         )
 
         status, body = request.next_chunk(http=http)
-        self.assertEqual(None, body)
+        self.assertEquals(None, body)
         self.assertTrue(isinstance(status, MediaUploadProgress))
-        self.assertEqual(13, status.resumable_progress)
+        self.assertEquals(13, status.resumable_progress)
 
         # Two requests should have been made and the resumable_uri should have been
         # updated for each one.
-        self.assertEqual(request.resumable_uri, "http://upload.example.com/2")
+        self.assertEquals(request.resumable_uri, "http://upload.example.com/2")
 
-        self.assertEqual(media_upload, request.resumable)
-        self.assertEqual(13, request.resumable_progress)
+        self.assertEquals(media_upload, request.resumable)
+        self.assertEquals(13, request.resumable_progress)
 
         status, body = request.next_chunk(http=http)
-        self.assertEqual(request.resumable_uri, "http://upload.example.com/3")
-        self.assertEqual(media_upload.size() - 1, request.resumable_progress)
-        self.assertEqual(request.body, None)
+        self.assertEquals(request.resumable_uri, "http://upload.example.com/3")
+        self.assertEquals(media_upload.size() - 1, request.resumable_progress)
+        self.assertEquals(request.body, None)
 
         # Final call to next_chunk should complete the upload.
         status, body = request.next_chunk(http=http)
-        self.assertEqual(body, {"foo": "bar"})
-        self.assertEqual(status, None)
+        self.assertEquals(body, {"foo": "bar"})
+        self.assertEquals(status, None)
 
     def test_resumable_media_good_upload_from_execute(self):
         """Not a multipart upload."""
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("small.png"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body=None)
@@ -1756,12 +1201,12 @@ class Discovery(unittest.TestCase):
         )
 
         body = request.execute(http=http)
-        self.assertEqual(body, {"foo": "bar"})
+        self.assertEquals(body, {"foo": "bar"})
 
     def test_resumable_media_fail_unknown_response_code_first_request(self):
         """Not a multipart upload."""
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("small.png"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body=None)
@@ -1779,7 +1224,7 @@ class Discovery(unittest.TestCase):
     def test_resumable_media_fail_unknown_response_code_subsequent_request(self):
         """Not a multipart upload."""
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("small.png"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body=None)
@@ -1802,7 +1247,7 @@ class Discovery(unittest.TestCase):
         )
 
         status, body = request.next_chunk(http=http)
-        self.assertEqual(
+        self.assertEquals(
             status.resumable_progress,
             7,
             "Should have first checked length and then tried to PUT more.",
@@ -1821,10 +1266,10 @@ class Discovery(unittest.TestCase):
 
     def test_media_io_base_stream_unlimited_chunksize_resume(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         # Set up a seekable stream and try to upload in single chunk.
-        fd = io.BytesIO(b'01234"56789"')
+        fd = BytesIO(b'01234"56789"')
         media_upload = MediaIoBaseUpload(
             fd=fd, mimetype="text/plain", chunksize=-1, resumable=True
         )
@@ -1852,10 +1297,10 @@ class Discovery(unittest.TestCase):
 
     def test_media_io_base_stream_chunksize_resume(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         # Set up a seekable stream and try to upload in chunks.
-        fd = io.BytesIO(b"0123456789")
+        fd = BytesIO(b"0123456789")
         media_upload = MediaIoBaseUpload(
             fd=fd, mimetype="text/plain", chunksize=5, resumable=True
         )
@@ -1884,7 +1329,7 @@ class Discovery(unittest.TestCase):
         )
 
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         # Create an upload that doesn't know the full size of the media.
         class IoBaseUnknownLength(MediaUpload):
@@ -1911,7 +1356,7 @@ class Discovery(unittest.TestCase):
 
     def test_resumable_media_no_streaming_on_unsupported_platforms(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         class IoBaseHasStream(MediaUpload):
             def chunksize(self):
@@ -1964,9 +1409,9 @@ class Discovery(unittest.TestCase):
         )
 
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
-        fd = io.BytesIO(b"data goes here")
+        fd = BytesIO(b"data goes here")
 
         # Create an upload that doesn't know the full size of the media.
         upload = MediaIoBaseUpload(
@@ -1988,10 +1433,10 @@ class Discovery(unittest.TestCase):
         )
 
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         # Create an upload that doesn't know the full size of the media.
-        fd = io.BytesIO(b"data goes here")
+        fd = BytesIO(b"data goes here")
 
         upload = MediaIoBaseUpload(
             fd=fd, mimetype="image/png", chunksize=500, resumable=True
@@ -2038,7 +1483,7 @@ class Discovery(unittest.TestCase):
         ]
 
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         self.assertEqual(sorted(zoo.__dict__.keys()), sorted_resource_keys)
 
         pickled_zoo = pickle.dumps(zoo)
@@ -2069,7 +1514,8 @@ class Discovery(unittest.TestCase):
         # instances upon un-pickling
 
     def _dummy_zoo_request(self):
-        zoo_contents = read_datafile("zoo.json")
+        with open(os.path.join(DATA_DIR, "zoo.json"), "rU") as fh:
+            zoo_contents = fh.read()
 
         zoo_uri = uritemplate.expand(DISCOVERY_URI, {"api": "zoo", "apiVersion": "v1"})
         if "REMOTE_ADDR" in os.environ:
@@ -2111,7 +1557,7 @@ class Discovery(unittest.TestCase):
         http = credentials.authorize(http)
         self.assertTrue(hasattr(http.request, "credentials"))
 
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         pickled_zoo = pickle.dumps(zoo)
         new_zoo = pickle.loads(pickled_zoo)
         self.assertEqual(sorted(zoo.__dict__.keys()), sorted(new_zoo.__dict__.keys()))
@@ -2120,14 +1566,14 @@ class Discovery(unittest.TestCase):
 
     def test_resumable_media_upload_no_content(self):
         self.http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=self.http, static_discovery=False)
+        zoo = build("zoo", "v1", http=self.http)
 
         media_upload = MediaFileUpload(datafile("empty"), resumable=True)
         request = zoo.animals().insert(media_body=media_upload, body=None)
 
-        self.assertEqual(media_upload, request.resumable)
-        self.assertEqual(request.body, None)
-        self.assertEqual(request.resumable_uri, None)
+        self.assertEquals(media_upload, request.resumable)
+        self.assertEquals(request.body, None)
+        self.assertEquals(request.resumable_uri, None)
 
         http = HttpMockSequence(
             [
@@ -2144,9 +1590,9 @@ class Discovery(unittest.TestCase):
         )
 
         status, body = request.next_chunk(http=http)
-        self.assertEqual(None, body)
+        self.assertEquals(None, body)
         self.assertTrue(isinstance(status, MediaUploadProgress))
-        self.assertEqual(0, status.progress())
+        self.assertEquals(0, status.progress())
 
 
 class Next(unittest.TestCase):
@@ -2168,8 +1614,8 @@ class Next(unittest.TestCase):
         tasks = build("tasks", "v1", http=self.http)
         request = tasks.tasklists().list()
         next_request = tasks.tasklists().list_next(request, {"nextPageToken": "123abc"})
-        parsed = urllib.parse.urlparse(next_request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = list(urlparse(next_request.uri))
+        q = parse_qs(parsed[4])
         self.assertEqual(q["pageToken"][0], "123abc")
 
     def test_next_successful_with_next_page_token_alternate_name(self):
@@ -2177,8 +1623,8 @@ class Next(unittest.TestCase):
         bigquery = build("bigquery", "v2", http=self.http)
         request = bigquery.tabledata().list(datasetId="", projectId="", tableId="")
         next_request = bigquery.tabledata().list_next(request, {"pageToken": "123abc"})
-        parsed = urllib.parse.urlparse(next_request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = list(urlparse(next_request.uri))
+        q = parse_qs(parsed[4])
         self.assertEqual(q["pageToken"][0], "123abc")
 
     def test_next_successful_with_next_page_token_in_body(self):
@@ -2188,13 +1634,10 @@ class Next(unittest.TestCase):
         next_request = logging.entries().list_next(request, {"nextPageToken": "123abc"})
         body = JsonModel().deserialize(next_request.body)
         self.assertEqual(body["pageToken"], "123abc")
-        # The body is changed, make sure that body_length is changed too (see
-        # github #1403)
-        self.assertEqual(next_request.body_size, len(next_request.body))
 
     def test_next_with_method_with_no_properties(self):
         self.http = HttpMock(datafile("latitude.json"), {"status": "200"})
-        service = build("latitude", "v1", http=self.http, static_discovery=False)
+        service = build("latitude", "v1", http=self.http)
         service.currentLocation().get()
 
     def test_next_nonexistent_with_no_next_page_token(self):
@@ -2208,19 +1651,19 @@ class Next(unittest.TestCase):
         drive = build("drive", "v3", http=self.http)
         request = drive.changes().list(pageToken="startPageToken")
         next_request = drive.changes().list_next(request, {"nextPageToken": "123abc"})
-        parsed = urllib.parse.urlparse(next_request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = list(urlparse(next_request.uri))
+        q = parse_qs(parsed[4])
         self.assertEqual(q["pageToken"][0], "123abc")
 
 
 class MediaGet(unittest.TestCase):
     def test_get_media(self):
         http = HttpMock(datafile("zoo.json"), {"status": "200"})
-        zoo = build("zoo", "v1", http=http, static_discovery=False)
+        zoo = build("zoo", "v1", http=http)
         request = zoo.animals().get_media(name="Lion")
 
-        parsed = urllib.parse.urlparse(request.uri)
-        q = urllib.parse.parse_qs(parsed.query)
+        parsed = urlparse(request.uri)
+        q = parse_qs(parsed[4])
         self.assertEqual(q["alt"], ["media"])
         self.assertEqual(request.headers["accept"], "*/*")
 
