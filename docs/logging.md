@@ -14,9 +14,9 @@ You can enable logging of key events in this library by configuring Python's sta
 
 In the following code, the logging level is set to `INFO`, and the Google Translate API is called:
 
-```python
+```py
 import logging
-from googleapiclient.discovery import build
+from apiclient.discovery import build
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -45,7 +45,7 @@ INFO:root:URL being requested: https://www.googleapis.com/language/translate/v2?
 
 For even more detailed logging you can set the debug level of the [httplib2](https://github.com/httplib2/httplib2) module used by this library. The following code snippet enables logging of all HTTP request and response headers and bodies:
 
-```python
+```py
 import httplib2
 httplib2.debuglevel = 4
 ```

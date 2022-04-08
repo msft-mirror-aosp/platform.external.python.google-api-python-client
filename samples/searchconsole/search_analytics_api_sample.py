@@ -190,7 +190,7 @@ def print_table(response, title):
     keys = ''
     # Keys are returned only if one or more dimensions are requested.
     if 'keys' in row:
-      keys = u','.join(row['keys']).encode('utf-8').decode()
+      keys = u','.join(row['keys']).encode('utf-8')
     print(row_format.format(
         keys, row['clicks'], row['impressions'], row['ctr'], row['position']))
 

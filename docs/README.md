@@ -1,4 +1,4 @@
-# Google API Client Library for Python Docs
+# Google API Client LIbrary for Python Docs
 
  The Google API Client Library for Python is designed for Python
 client-application developers. It offers simple, flexible
@@ -7,7 +7,8 @@ access to many Google APIs.
 ## Features
 
 - Call Google APIs simply
-- Handle Auth with fewer lines of code
+- Use the library with Google App Engine
+- Handle Auath with fewer lines of code
 - Use standard tooling for installation
 
 ## Documentation
@@ -31,6 +32,8 @@ Learn how to use the Google API Python Client with these guides:
   - [Use Pagination](pagination.md)
   - [Improve Performance](performance.md)
   - [Understand Thread Safety](thread_safety.md)
+  - [Use Google App Engine](google_app_engine.md)
+  - [Use Django](django.md)
 
 ### Reference Documentation
 
